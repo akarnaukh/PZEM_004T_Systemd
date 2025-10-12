@@ -1,8 +1,6 @@
 #ifndef PZEM_MONITOR_H
 #define PZEM_MONITOR_H
 
-//#define _POSIX_C_SOURCE 200112L // Для strdup и usleep
-
 #include <stdio.h>
 #include <errno.h>
 #include <modbus/modbus.h>
@@ -17,6 +15,7 @@
 
 // Размер буфера логов (15-20 строк)
 #define LOG_BUFFER_SIZE 20
+#define PZEM_FIFO_PATH "/tmp/pzem_data_%s"  // %s будет заменен на config_name
 
 // Структура для хранения конфигурации
 typedef struct {
@@ -56,7 +55,7 @@ typedef struct {
     float voltage;
     float current;
     float frequency;
-    float power;
+    float power;  // Добавляем мощность
     int status;
     int first_read;
     
@@ -89,6 +88,11 @@ int load_config(const char *config_file, pzem_config_t *config);
 int create_directory_if_not_exists(const char *path);
 int validate_config(const pzem_config_t *config);
 void extract_config_name(const char *config_path);
+
+// Функции для FIFO
+int init_data_fifo(const char *fifo_path);
+int write_to_fifo(const char *fifo_path, const char *data);
+void cleanup_fifo(const char *fifo_path);
 
 // Функции работы с логами
 int init_log_buffer(log_buffer_t *buffer, int initial_capacity, const char *log_dir);

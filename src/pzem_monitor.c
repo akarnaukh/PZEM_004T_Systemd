@@ -1,5 +1,3 @@
-#define _POSIX_C_SOURCE 200112L // Для strdup и usleep
-
 #include "pzem_monitor.h"
 
 // Глобальные переменные
@@ -9,31 +7,8 @@ log_buffer_t log_buffer = {0};
 pzem_config_t global_config;
 char *service_name = "pzem";
 char config_name[64] = "default";
-
-// Своя реализация strdup если недоступна
-#ifndef _POSIX_C_SOURCE
-char* my_strdup(const char* str) {
-    if (str == NULL) return NULL;
-    size_t len = strlen(str) + 1;
-    char* copy = malloc(len);
-    if (copy != NULL) {
-        memcpy(copy, str, len);
-    }
-    return copy;
-}
-#define strdup my_strdup
-#endif
-
-// Своя реализация usleep если недоступна
-#ifndef _POSIX_C_SOURCE
-void my_usleep(unsigned int usec) {
-    struct timespec ts;
-    ts.tv_sec = usec / 1000000;
-    ts.tv_nsec = (usec % 1000000) * 1000;
-    nanosleep(&ts, NULL);
-}
-#define usleep my_usleep
-#endif
+// Глобальная переменная для FIFO
+char fifo_path[256];
 
 // Обработчик сигналов
 void signal_handler(int sig) {
@@ -51,7 +26,7 @@ void extract_config_name(const char *config_path) {
     }
     
     strncpy(config_name, last_slash, sizeof(config_name) - 1);
-    config_name[sizeof(config_name) - 1] = '\0'; // Гарантируем завершающий ноль
+    config_name[sizeof(config_name) - 1] = '\0';
     
     char *dot = strrchr(config_name, '.');
     if (dot != NULL && (strcmp(dot, ".conf") == 0 || strcmp(dot, ".cfg") == 0)) {
@@ -61,6 +36,34 @@ void extract_config_name(const char *config_path) {
     if (strlen(config_name) == 0) {
         strcpy(config_name, "default");
     }
+}
+
+// Инициализация FIFO
+int init_data_fifo(const char *fifo_path) {
+    unlink(fifo_path); // Удаляем старый FIFO если существует
+    if (mkfifo(fifo_path, 0666) == -1) {
+        syslog(LOG_ERR, "Failed to create FIFO %s: %s", fifo_path, strerror(errno));
+        return -1;
+    }
+    syslog(LOG_INFO, "Data FIFO created: %s", fifo_path);
+    return 0;
+}
+
+// Запись данных в FIFO
+int write_to_fifo(const char *fifo_path, const char *data) {
+    FILE *fifo = fopen(fifo_path, "w");
+    if (fifo == NULL) {
+        return -1;
+    }
+    fprintf(fifo, "%s\n", data);
+    fflush(fifo);
+    fclose(fifo);
+    return 0;
+}
+
+// Очистка FIFO
+void cleanup_fifo(const char *fifo_path) {
+    unlink(fifo_path);
 }
 
 // Функция создания директории если не существует
@@ -113,7 +116,6 @@ int init_log_buffer(log_buffer_t *buffer, int initial_capacity, const char *log_
     buffer->size = 0;
     buffer->write_index = 0;
     
-    // Безопасное копирование строк
     strncpy(buffer->log_dir, log_dir, sizeof(buffer->log_dir) - 1);
     buffer->log_dir[sizeof(buffer->log_dir) - 1] = '\0';
     
@@ -130,22 +132,30 @@ int init_log_buffer(log_buffer_t *buffer, int initial_capacity, const char *log_
 // Функция добавления записи в буфер
 int add_to_log_buffer(log_buffer_t *buffer, const char *log_entry) {
     if (buffer->buffer == NULL) {
+        syslog(LOG_ERR, "Log buffer is not initialized");
         return -1;
     }
     
     // Если буфер полный, сбрасываем его в файл
     if (buffer->size >= buffer->capacity) {
-        flush_log_buffer(buffer);
+        //syslog(LOG_DEBUG, "Buffer full (%d/%d), flushing...", buffer->size, buffer->capacity);
+        if (flush_log_buffer(buffer) == -1) {
+            syslog(LOG_ERR, "Failed to flush buffer to disk");
+            return -1;
+        }
     }
     
     char *entry_copy = strdup(log_entry);
     if (entry_copy == NULL) {
+        syslog(LOG_ERR, "Failed to allocate memory for log entry");
         return -1;
     }
     
     buffer->buffer[buffer->write_index] = entry_copy;
     buffer->write_index = (buffer->write_index + 1) % buffer->capacity;
     buffer->size++;
+    
+    //syslog(LOG_DEBUG, "Added log entry to buffer (%d/%d)", buffer->size, buffer->capacity);
     
     return 0;
 }
@@ -159,11 +169,23 @@ int flush_log_buffer(log_buffer_t *buffer) {
     char log_path[512];
     get_log_file_path(log_path, sizeof(log_path), buffer->log_dir);
     
+    // Проверяем доступность файла перед записью
+    FILE *test_file = fopen(log_path, "a");
+    if (test_file == NULL) {
+        syslog(LOG_ERR, "Cannot open log file '%s' for appending: %s", log_path, strerror(errno));
+        return -1;
+    }
+    fclose(test_file);
+    
+    // Теперь открываем для реальной записи
     FILE *log_file = fopen(log_path, "a");
     if (log_file == NULL) {
         syslog(LOG_ERR, "Error opening log file '%s': %s", log_path, strerror(errno));
         return -1;
     }
+    
+    // Устанавливаем правильные права на файл
+    fchmod(fileno(log_file), 0644);
     
     for (int i = 0; i < buffer->size; i++) {
         int index = (buffer->write_index - buffer->size + i + buffer->capacity) % buffer->capacity;
@@ -493,7 +515,7 @@ int init_modbus_connection(const pzem_config_t *config) {
     return 0;
 }
 
-// Функция чтения данных с PZEM
+// Функция чтения данных с PZEM (добавляем чтение мощности)
 int read_pzem_data(pzem_data_t *data) {
     uint16_t tab_reg[10];
     int rc;
@@ -527,6 +549,9 @@ int read_pzem_data(pzem_data_t *data) {
 
 // Функция очистки ресурсов
 void cleanup(void) {
+    // Очистка FIFO при завершении
+    cleanup_fifo(fifo_path);
+
     if (log_buffer.buffer != NULL) {
         flush_log_buffer(&log_buffer);
     }
@@ -550,8 +575,7 @@ void safe_reconnect(const pzem_config_t *config) {
         }
     }
     
-    usleep(1000000); // 1 секунда
-    
+    usleep(1000000);
     if (init_modbus_connection(config) == 0) {
         syslog(LOG_INFO, "Reconnected successfully");
     }
@@ -579,6 +603,14 @@ int main(int argc, char *argv[]) {
     signal(SIGQUIT, signal_handler);
     
     syslog(LOG_INFO, "PZEM-004T Monitor starting with config: %s", config_file);
+
+    // Создаем FIFO для передачи данных
+    snprintf(fifo_path, sizeof(fifo_path), "/tmp/pzem_data_%s", config_name);
+    if (init_data_fifo(fifo_path) == -1) {
+	syslog(LOG_WARNING, "Failed to create data FIFO, data broadcasting disabled");
+    } else {
+	syslog(LOG_INFO, "Data broadcasting enabled via FIFO: %s", fifo_path);
+    }
     
     if (load_config(config_file, &global_config) == -1) {
         syslog(LOG_ERR, "Failed to load configuration");
@@ -605,6 +637,17 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
+    // ДОБАВЛЕНО: Проверяем доступность лог-файла при старте
+    char log_path[512];
+    get_log_file_path(log_path, sizeof(log_path), global_config.log_dir);
+    FILE *test_file = fopen(log_path, "a");
+    if (test_file == NULL) {
+        syslog(LOG_ERR, "Cannot access log file '%s': %s", log_path, strerror(errno));
+    } else {
+        fclose(test_file);
+        syslog(LOG_INFO, "Log file accessible: %s", log_path);
+    }
+
     memset(&current_data, 0, sizeof(current_data));
     memset(&previous_data, 0, sizeof(previous_data));
     previous_data.first_read = 1;
@@ -654,6 +697,9 @@ int main(int argc, char *argv[]) {
             // Всегда пишем в лог при изменении
             char log_entry[256];
             prepare_log_entry(log_entry, sizeof(log_entry), &current_data);
+	    
+	    write_to_fifo(fifo_path, log_entry);
+
             add_to_log_buffer(&log_buffer, log_entry);
             
             previous_data = current_data;

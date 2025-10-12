@@ -3,7 +3,8 @@
 # Compiler and flags
 СС = arm-linux-gnueabihf-gcc
 #CC = gcc
-CFLAGS = -Wall -Wextra -O2 -std=c99
+CFLAGS = -Wall -Wextra -O2
+#CFLAGS = -Wall -Wextra -O2 -std=c99
 LDFLAGS = -lmodbus -lm
 DEBUG_CFLAGS = -g -DDEBUG
 
