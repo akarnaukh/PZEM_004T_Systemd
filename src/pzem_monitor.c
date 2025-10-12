@@ -12,6 +12,7 @@ char fifo_path[256];
 
 // Обработчик сигналов
 void signal_handler(int sig) {
+    syslog(LOG_DEBUG, "Received signal %d, setting keep_running to 0", sig);
     keep_running = 0;
     syslog(LOG_INFO, "Received signal %d, shutting down", sig);
 }
@@ -51,14 +52,24 @@ int init_data_fifo(const char *fifo_path) {
 
 // Запись данных в FIFO
 int write_to_fifo(const char *fifo_path, const char *data) {
-    FILE *fifo = fopen(fifo_path, "w");
-    if (fifo == NULL) {
+    int fd = open(fifo_path, O_WRONLY | O_NONBLOCK);
+    if (fd == -1) {
+        // Если нет читателей - это нормально, просто пропускаем запись
+        if (errno == ENXIO) {
+            return 0;
+        }
+        syslog(LOG_DEBUG, "Failed to open FIFO %s: %s", fifo_path, strerror(errno));
         return -1;
     }
-    fprintf(fifo, "%s\n", data);
-    fflush(fifo);
-    fclose(fifo);
-    return 0;
+    
+    int bytes_written = write(fd, data, strlen(data));
+    if (bytes_written == -1) {
+        // Ошибка записи (скорее всего нет читателей)
+        syslog(LOG_DEBUG, "Failed to write to FIFO: %s", strerror(errno));
+    }
+    
+    close(fd);
+    return (bytes_written == -1) ? -1 : 0;
 }
 
 // Очистка FIFO
@@ -138,7 +149,7 @@ int add_to_log_buffer(log_buffer_t *buffer, const char *log_entry) {
     
     // Если буфер полный, сбрасываем его в файл
     if (buffer->size >= buffer->capacity) {
-        //syslog(LOG_DEBUG, "Buffer full (%d/%d), flushing...", buffer->size, buffer->capacity);
+        syslog(LOG_DEBUG, "Buffer full (%d/%d), flushing...", buffer->size, buffer->capacity);
         if (flush_log_buffer(buffer) == -1) {
             syslog(LOG_ERR, "Failed to flush buffer to disk");
             return -1;
@@ -154,8 +165,7 @@ int add_to_log_buffer(log_buffer_t *buffer, const char *log_entry) {
     buffer->buffer[buffer->write_index] = entry_copy;
     buffer->write_index = (buffer->write_index + 1) % buffer->capacity;
     buffer->size++;
-    
-    //syslog(LOG_DEBUG, "Added log entry to buffer (%d/%d)", buffer->size, buffer->capacity);
+    syslog(LOG_DEBUG, "Added log entry to buffer (%d/%d)", buffer->size, buffer->capacity);
     
     return 0;
 }
@@ -549,12 +559,16 @@ int read_pzem_data(pzem_data_t *data) {
 
 // Функция очистки ресурсов
 void cleanup(void) {
-    // Очистка FIFO при завершении
-    cleanup_fifo(fifo_path);
-
+    syslog(LOG_DEBUG, "Cleanup started");
+    
+    // Принудительно сбрасываем буфер логов
     if (log_buffer.buffer != NULL) {
+        syslog(LOG_DEBUG, "Flushing log buffer (%d records)", log_buffer.size);
         flush_log_buffer(&log_buffer);
     }
+    
+    // Очищаем FIFO
+    cleanup_fifo(fifo_path);
     
     if (ctx != NULL) {
         modbus_close(ctx);
@@ -562,6 +576,8 @@ void cleanup(void) {
         ctx = NULL;
         syslog(LOG_INFO, "Modbus connection closed");
     }
+    
+    syslog(LOG_DEBUG, "Cleanup completed");
 }
 
 // Функция безопасного переподключения
@@ -665,7 +681,9 @@ int main(int argc, char *argv[]) {
     if (global_config.voltage_high_alarm > 0) strcat(thresholds, "V");
     if (global_config.current_high_alarm > 0) strcat(thresholds, "I");
     if (global_config.frequency_high_alarm > 0) strcat(thresholds, "Z");
-    
+#ifdef DEBUG
+    syslog(LOG_DEBUG, "Debug mode enabled");
+#endif
     syslog(LOG_INFO, "Config: %s@%d, addr=%d, interval=%dms, thresholds=%s", 
            global_config.tty_port, global_config.baudrate, global_config.slave_addr, 
            global_config.poll_interval_ms, thresholds);
@@ -688,24 +706,32 @@ int main(int argc, char *argv[]) {
             // Обновляем состояния порогов только при успешном чтении
             update_threshold_states(&current_data, &global_config);
         }
-        
+
         // Проверяем изменения значений ИЛИ изменений состояний порогов
         int data_changed = values_changed(&current_data, &previous_data, &global_config);
         int states_changed = threshold_states_changed(&current_data, &previous_data);
-        
-        if (data_changed || states_changed) {
-            // Всегда пишем в лог при изменении
-            char log_entry[256];
-            prepare_log_entry(log_entry, sizeof(log_entry), &current_data);
-	    
-	    write_to_fifo(fifo_path, log_entry);
 
-            add_to_log_buffer(&log_buffer, log_entry);
-            
-            previous_data = current_data;
-            previous_data.first_read = 0;
-        }
-        
+	if (data_changed || states_changed) {
+	    char log_entry[256];
+	    prepare_log_entry(log_entry, sizeof(log_entry), &current_data);
+
+	    // Отладочное сообщение
+	    syslog(LOG_DEBUG, "Data changed, preparing to write: %s", log_entry);
+
+	    // СРАЗУ отправляем в FIFO
+	    if (write_to_fifo(fifo_path, log_entry) == -1) {
+		syslog(LOG_DEBUG, "Failed to write to FIFO");
+	    }
+
+	    // Затем добавляем в буфер логов
+	    if (add_to_log_buffer(&log_buffer, log_entry) == -1) {
+		syslog(LOG_DEBUG, "Failed to add to log buffer");
+	    }
+
+	    previous_data = current_data;
+	    previous_data.first_read = 0;
+	}
+
         // Сбрасываем буфер если он полный
         if (should_flush_buffer(&log_buffer)) {
             flush_log_buffer(&log_buffer);

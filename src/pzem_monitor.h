@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <syslog.h>
+#include <fcntl.h>      // для O_NONBLOCK
 
 // Размер буфера логов (15-20 строк)
 #define LOG_BUFFER_SIZE 20
