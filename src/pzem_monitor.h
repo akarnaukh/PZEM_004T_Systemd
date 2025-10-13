@@ -14,8 +14,6 @@
 #include <syslog.h>
 #include <fcntl.h>      // для O_NONBLOCK
 
-// Размер буфера логов (15-20 строк)
-#define LOG_BUFFER_SIZE 20
 #define PZEM_FIFO_PATH "/tmp/pzem_data_%s"  // %s будет заменен на config_name
 
 // Структура для хранения конфигурации
@@ -25,6 +23,7 @@ typedef struct {
     int slave_addr;
     int poll_interval_ms;
     char log_dir[256];
+    int log_buffer_size;  // Добавляем размер буфера
     
     // Чувствительность изменений
     float voltage_sensitivity;

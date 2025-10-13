@@ -28,7 +28,7 @@ OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
 TARGET = $(BINDIR)/pzem_monitor
 
 # Default target - build and create templates
-all: templates $(TARGET)
+all: allclean templates $(TARGET)
 
 # Create directories
 $(BUILDDIR):
@@ -48,7 +48,7 @@ $(TARGET): $(OBJECTS) | $(BINDIR)
 
 # Debug build
 debug: CFLAGS += $(DEBUG_CFLAGS)
-debug: $(TARGET)
+debug: clean $(TARGET)
 
 # Create configuration and service templates
 templates: | $(CONFIGDIR) $(SYSTEMDDIR)
@@ -61,10 +61,11 @@ templates: | $(CONFIGDIR) $(SYSTEMDDIR)
 	@echo "tty_port = /dev/ttyS1" >> $(CONFIGDIR)/pzem_default.conf
 	@echo "baudrate = 9600" >> $(CONFIGDIR)/pzem_default.conf
 	@echo "slave_addr = 1" >> $(CONFIGDIR)/pzem_default.conf
-	@echo "poll_interval_ms = 500" >> $(CONFIGDIR)/pzem_default.conf
+	@echo "poll_interval_ms = 500 # Диапазон периода 50 - 10000мс" >> $(CONFIGDIR)/pzem_default.conf
 	@echo "" >> $(CONFIGDIR)/pzem_default.conf
 	@echo "# Logging settings" >> $(CONFIGDIR)/pzem_default.conf
 	@echo "log_dir = /var/log/pzem" >> $(CONFIGDIR)/pzem_default.conf
+	@echo "log_buffer_size = 10  # Размер буфера логов в строках (1-25)" >> $(CONFIGDIR)/pzem_default.conf
 	@echo "" >> $(CONFIGDIR)/pzem_default.conf
 	@echo "# Sensitivity settings" >> $(CONFIGDIR)/pzem_default.conf
 	@echo "voltage_sensitivity = 0.1" >> $(CONFIGDIR)/pzem_default.conf

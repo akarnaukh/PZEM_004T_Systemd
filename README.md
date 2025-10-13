@@ -1,84 +1,104 @@
-
-
-# PZEM-004T Systemd service linux.
+# PZEM-004T Monitor Service
 ## Monitoring & log
 #### `Version: 1.0b`
 
-Сервис читает данные по ModBus с PZEM-004T v4.0 анализирует полученные данные и записывает в лог.
-Обрабатывает пороговые значения для определения повышенного или пониженного напряжения, тока или частоты. 
->
-Примерно один опрос и анализ занимает от 100 до 200мс, что позволяет опрашивать до 5 раз в секунду.
->
-Создает FIFO в tmp, для других сервисов. В отличии от лога, данные туда передаються при каждом изменении.
->
-Может быть запущенно несколько экземпляров, например для разных фаз.
->
-Все параметры указываються в файле конфигурации.
->
+## Описание
 
+PZEM-004T Monitor - это системный сервис для мониторинга электроэнергии с помощью датчиков PZEM-004T через интерфейс Modbus-RTU. Сервис предназначен для работы на embedded Linux системах (Raspberry Pi, Orange Pi, Luckfox Pico и др.).
 
-## Installation / Установка
+## Основные возможности:
 
+- Мониторинг параметров: напряжение, ток, частота, мощность
+- Пороговые значения: настраиваемые пределы с состояниями H/L/N
+- Автоматическое логирование: запись данных в CSV-файлы
+- Буферизация: эффективное сохранение данных с минимальным IO
+- Real-time данные: передача через FIFO для других сервисов
+- Автовосстановление: автоматическое переподключение при ошибках
+- Гибкая конфигурация: отдельные конфиги для каждого экземпляра
+
+## Установка и сборка
+
+### Предварительные требования
 ```bash
-  # Установить необходимую библиотеку
-    sudo apt-get install libmodbus-dev
+# Установка зависимостей (Debian/Ubuntu)
+sudo apt update
+sudo apt install build-essential libmodbus-dev
 
-  # Прейти в каталог с проектом
-    cd pzem-monitor
-
-  # Собрать программу и создать шаблоны
-    make
-
-  # Только создать шаблоны
-    make templates
-
-  # Установить в систему
-    sudo make install
-
-  # Полная очистка (включая шаблоны)
-    make allclean
-
-  # Обычная очистка (только объектные файлы)
-    make clean
-
-  # Помощь
-    make help
+# Или для Alpine Linux
+sudo apk add build-base libmodbus-dev
 ```
-    
-## Config / Конфигурация
+### Сборка из исходников
+
+-  Клонирование или создание структуры проекта:
 ```sh
+git clone https://github.com/akarnaukh/PZEM_004T_Systemd.git
+cd PZEM_004T_Systemd
+```
+- Размещение файлов:
+```text
+src/pzem_monitor.h - заголовочный файл
+src/pzem_monitor.c - основной код
+config/pzem_default.conf - конфигурация по умолчанию
+systemd/pzem@.service - systemd сервис
+Makefile - система сборки
+```
+ - Сборка проекта:
+ ```sh
+ # Стандартная сборка с шаблонами
+make
+
+# Сборка с отладочной информацией
+make debug
+
+# Только создание шаблонов конфигурации
+make templates
+```
+- Установка в систему:
+```sh
+sudo make install
+```
+## Удаление сервиса
+```sh
+# Полное удаление из системы
+sudo make uninstall
+
+# Логи и конфиги не удаляються автоматически
+# Ручное удаление логов и конфигов
+sudo rm -rf /etc/pzem
+sudo rm -rf /var/log/pzem # или как указано в конфигурации
+```
+
+## Настройка конфигурации
+- Основной конфигурационный файл создается автоматически в /etc/pzem/default.conf:
+```ini
 # PZEM-004T Default Configuration
 
 # Serial port settings
-tty_port = /dev/ttyS1
+tty_port = /dev/ttyS1 
 baudrate = 9600
-# Адрес MODBUS PZEM
 slave_addr = 1
-# Период опроса в ms
-poll_interval_ms = 500
+# Период опроса в мс (допустимый диапазон 50 - 10000мс)
+poll_interval_ms = 500 
 
 # Logging settings
 log_dir = /var/log/pzem
+# Размер буфера логов в строках (1-25)
+log_buffer_size = 10
 
 # Sensitivity settings
-# На сколько должны измениться данные 
-# от предыдушего замера, чтобы зафиксировать изменения
+# Чувствительность, на какие значения должны измениться данные
+# Чтобы считать, что они изменились
 voltage_sensitivity = 0.1
 current_sensitivity = 0.001
 frequency_sensitivity = 0.1
 power_sensitivity = 1.0
 
 # Voltage thresholds (0 = disabled)
+# Пороговые значения, по которым выставляются статусы H, L, N
 voltage_high_alarm = 245
 voltage_high_warning = 240
 voltage_low_warning = 210
 voltage_low_alarm = 200
-
-# Current thresholds (0 = disabled)
-current_high_alarm = 0
-current_high_warning = 0
-current_low_warning = 0
-current_low_alarm = 0
 
 # Frequency thresholds (0 = disabled)
 frequency_high_alarm = 52
@@ -86,33 +106,114 @@ frequency_high_warning = 51
 frequency_low_warning = 49
 frequency_low_alarm = 48
 ```
-## Usage / Использование
+- Создание дополнительных конфигураций:
+```sh
+sudo cp /etc/pzem/default.conf /etc/pzem/phase1.conf
+sudo cp /etc/pzem/default.conf /etc/pzem/phase2.conf
+sudo nano /etc/pzem/phase1.conf  # редактирование настроек
+```
 
+## Управление сервисом
+```sh
+# Запуск сервиса с разными конфигурациями
+sudo systemctl start pzem@default
+sudo systemctl start pzem@phase1
+sudo systemctl start pzem@phase2
 
-#### Запустить сервис c default
+# Автозагрузка при старте системы
+sudo systemctl enable pzem@phase1
+
+# Просмотр статуса
+sudo systemctl status pzem@phase1
+
+# Просмотр логов
+sudo journalctl -u pzem@phase1 -f
+
+# Остановка сервиса
+sudo systemctl stop pzem@phase1
+```
+## Структура лог-файлов
+- Лог-файлы создаются в директории указанной в конфигурации (default /var/log/pzem/) в формате:
+```text
+/var/log/pzem/
+├── pzem_default_2024-01-15.log
+├── pzem_phase1_2024-01-15.log
+└── pzem_phase2_2024-01-15.log
+```
+
+- Формат данных в логе (CSV):
+```csv
+дата,время,напряжение,состояние_напряжения,ток,состояние_тока,частота,состояние_частоты,мощность,статус
+2024-01-15,14:30:25,230.1,N,1.345,N,50.02,N,150.5,0
+2024-01-15,14:30:26,229.8,N,1.342,N,49.98,N,148.2,0
+```
+### Статусы состояний:
+- N  - норма (в пределах порогов)
+- H - высокое значение (превышение верхнего порога)
+- L - низкое значение (ниже нижнего порога)
+### Коды статуса:
+- 0 - OK (данные успешно прочитаны)
+- 1 - DEVICE_ERROR (ошибка устройства)
+- 2 - PORT_ERROR (ошибка последовательного порта)
+
+## Использование FIFO для внешних сервисов
+
+- Сервис создает named pipe для реальной передачи данных:
+```sh
+# Чтение данных в реальном времени ( /tmp/pzem_data_{config_name} )
+tail -f /tmp/pzem_data_phase1
+
+# Использование в скриптах
+while read line; do
+    echo "Received: $line"
+    # Обработка данных...
+done < /tmp/pzem_data_phase1
+```
+## Удаление сервиса
+```sh
+# Полное удаление из системы
+sudo make uninstall
+
+# Логи и конфиги не удаляються автоматически
+# Ручное удаление логов и конфигов
+sudo rm -rf /etc/pzem
+sudo rm -rf /var/log/pzem # или как указано в конфигурации
+```
+## Примеры использования
+
+### Для мониторинга одной фазы:
 ```sh
 sudo systemctl start pzem@default
-```
-#### Создать дополнительную конфигурацию
-```sh
-sudo cp /etc/pzem/default.conf /etc/pzem/garage.conf
-```
-отредактировать garage.conf и
-Запустить сервис c garage
-```sh
-sudo systemctl start pzem@garage
-```
-#### Просмотр логов 
-(при необходимости default заменить на свою конфигурацию)
-```sh
 sudo journalctl -u pzem@default -f
 ```
-#### Полностью удалить
-Перейти в каталог с проектом
+### Для трехфазной системы:
 ```sh
-sudo make uninstall
+sudo systemctl start pzem@phase1
+sudo systemctl start pzem@phase2  
+sudo systemctl start pzem@phase3
+sudo systemctl enable pzem@phase1 pzem@phase2 pzem@phase3
 ```
+### Для embedded устройства (минимальная нагрузка):
+```ini
+# В конфиге
+# Опрашиваем 1 раз в секунду
+poll_interval_ms = 1000
+# Буфер на 10 строк
+log_buffer_size = 10
+```
+## Решение проблем
+
+### Сервис не запускается
+
+- Проверьте правильность пути к serial порту в конфиге
+- Убедитесь что порт доступен: `ls -la /dev/ttyS*` 
+- Проверьте права: `s`udo usermod -a -G dialout $USER`
+### Нет данных в логах
+- Проверьте подключение PZEM-004T
+- Убедитесь в правильности slave address
+- Проверьте логи: `sudo journalctl -u pzem@{config_name}`
+### Высокая нагрузка CPU
+- Увеличьте `poll_interval_ms` в конфигурации (рекомендуется 500-1000ms)
 ## Authors
 
 - [@AKA_ZejroN](https://github.com/akarnaukh)
-

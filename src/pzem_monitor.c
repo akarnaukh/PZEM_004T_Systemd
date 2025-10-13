@@ -12,7 +12,9 @@ char fifo_path[256];
 
 // Обработчик сигналов
 void signal_handler(int sig) {
+#ifdef DEBUG
     syslog(LOG_DEBUG, "Received signal %d, setting keep_running to 0", sig);
+#endif
     keep_running = 0;
     syslog(LOG_INFO, "Received signal %d, shutting down", sig);
 }
@@ -58,15 +60,19 @@ int write_to_fifo(const char *fifo_path, const char *data) {
         if (errno == ENXIO) {
             return 0;
         }
+#ifdef DEBUG
         syslog(LOG_DEBUG, "Failed to open FIFO %s: %s", fifo_path, strerror(errno));
+#endif
         return -1;
     }
     
     int bytes_written = write(fd, data, strlen(data));
+#ifdef DEBUG
     if (bytes_written == -1) {
-        // Ошибка записи (скорее всего нет читателей)
+	// Ошибка записи (скорее всего нет читателей)
         syslog(LOG_DEBUG, "Failed to write to FIFO: %s", strerror(errno));
     }
+#endif
     
     close(fd);
     return (bytes_written == -1) ? -1 : 0;
@@ -149,7 +155,9 @@ int add_to_log_buffer(log_buffer_t *buffer, const char *log_entry) {
     
     // Если буфер полный, сбрасываем его в файл
     if (buffer->size >= buffer->capacity) {
+#ifdef DEBUG
         syslog(LOG_DEBUG, "Buffer full (%d/%d), flushing...", buffer->size, buffer->capacity);
+#endif
         if (flush_log_buffer(buffer) == -1) {
             syslog(LOG_ERR, "Failed to flush buffer to disk");
             return -1;
@@ -165,8 +173,9 @@ int add_to_log_buffer(log_buffer_t *buffer, const char *log_entry) {
     buffer->buffer[buffer->write_index] = entry_copy;
     buffer->write_index = (buffer->write_index + 1) % buffer->capacity;
     buffer->size++;
+#ifdef DEBUG
     syslog(LOG_DEBUG, "Added log entry to buffer (%d/%d)", buffer->size, buffer->capacity);
-    
+#endif
     return 0;
 }
 
@@ -378,6 +387,7 @@ int load_config(const char *config_file, pzem_config_t *config) {
     config->slave_addr = 1;
     config->poll_interval_ms = 500;
     strcpy(config->log_dir, "/var/log/pzem");
+    config->log_buffer_size = 20;
     
     // Чувствительность по умолчанию
     config->voltage_sensitivity = 0.1;
@@ -430,6 +440,9 @@ int load_config(const char *config_file, pzem_config_t *config) {
             else if (strcmp(key, "log_dir") == 0) {
                 strncpy(config->log_dir, trimmed_value, sizeof(config->log_dir) - 1);
                 config->log_dir[sizeof(config->log_dir) - 1] = '\0';
+            }
+	    else if (strcmp(key, "log_buffer_size") == 0) {
+                config->log_buffer_size = atoi(trimmed_value);
             }
             // Чувствительность
             else if (strcmp(key, "voltage_sensitivity") == 0) {
@@ -487,6 +500,37 @@ int load_config(const char *config_file, pzem_config_t *config) {
     }
     
     fclose(file);
+
+    // ПРОВЕРКИ КОРРЕКТНОСТИ ЗНАЧЕНИЙ
+    int config_changed = 0;
+    
+    // Проверка интервала опроса
+    if (config->poll_interval_ms < 100) {
+        syslog(LOG_WARNING, "Poll interval too small (%dms), setting to 100ms", config->poll_interval_ms);
+        config->poll_interval_ms = 100;
+        config_changed = 1;
+    } else if (config->poll_interval_ms > 10000) {
+        syslog(LOG_WARNING, "Poll interval too large (%dms), setting to 10000ms", config->poll_interval_ms);
+        config->poll_interval_ms = 10000;
+        config_changed = 1;
+    }
+    
+    // Проверка размера буфера логов
+    if (config->log_buffer_size < 1) {
+        syslog(LOG_WARNING, "Log buffer size too small (%d), setting to 1", config->log_buffer_size);
+        config->log_buffer_size = 1;
+        config_changed = 1;
+    } else if (config->log_buffer_size > 25) {
+        syslog(LOG_WARNING, "Log buffer size too large (%d), setting to 25", config->log_buffer_size);
+        config->log_buffer_size = 25;
+        config_changed = 1;
+    }
+    
+    if (config_changed) {
+        syslog(LOG_INFO, "Adjusted configuration: poll_interval=%dms, buffer_size=%d", 
+               config->poll_interval_ms, config->log_buffer_size);
+    }
+
     return 0;
 }
 
@@ -559,11 +603,15 @@ int read_pzem_data(pzem_data_t *data) {
 
 // Функция очистки ресурсов
 void cleanup(void) {
+#ifdef DEBUG
     syslog(LOG_DEBUG, "Cleanup started");
+#endif
     
     // Принудительно сбрасываем буфер логов
     if (log_buffer.buffer != NULL) {
+#ifdef DEBUG
         syslog(LOG_DEBUG, "Flushing log buffer (%d records)", log_buffer.size);
+#endif
         flush_log_buffer(&log_buffer);
     }
     
@@ -576,8 +624,9 @@ void cleanup(void) {
         ctx = NULL;
         syslog(LOG_INFO, "Modbus connection closed");
     }
-    
+#ifdef DEBUG
     syslog(LOG_DEBUG, "Cleanup completed");
+#endif
 }
 
 // Функция безопасного переподключения
@@ -586,7 +635,8 @@ void safe_reconnect(const pzem_config_t *config) {
     cleanup();
     
     if (log_buffer.buffer == NULL) {
-        if (init_log_buffer(&log_buffer, LOG_BUFFER_SIZE, config->log_dir) == -1) {
+//        if (init_log_buffer(&log_buffer, LOG_BUFFER_SIZE, config->log_dir) == -1) {
+	if (init_log_buffer(&log_buffer, global_config.log_buffer_size, global_config.log_dir) == -1) {
             syslog(LOG_ERR, "Failed to reinitialize log buffer");
         }
     }
@@ -647,7 +697,8 @@ int main(int argc, char *argv[]) {
     }
     
     // Инициализация буфера логов
-    if (init_log_buffer(&log_buffer, LOG_BUFFER_SIZE, global_config.log_dir) == -1) {
+//    if (init_log_buffer(&log_buffer, LOG_BUFFER_SIZE, global_config.log_dir) == -1) {
+    if (init_log_buffer(&log_buffer, global_config.log_buffer_size, global_config.log_dir) == -1) {
         syslog(LOG_ERR, "Failed to initialize log buffer");
         closelog();
         return 1;
@@ -714,18 +765,23 @@ int main(int argc, char *argv[]) {
 	if (data_changed || states_changed) {
 	    char log_entry[256];
 	    prepare_log_entry(log_entry, sizeof(log_entry), &current_data);
-
+#ifdef DEBUG
 	    // Отладочное сообщение
 	    syslog(LOG_DEBUG, "Data changed, preparing to write: %s", log_entry);
-
+#endif
 	    // СРАЗУ отправляем в FIFO
 	    if (write_to_fifo(fifo_path, log_entry) == -1) {
-		syslog(LOG_DEBUG, "Failed to write to FIFO");
+#ifdef DEBUG
+		syslog(LOG_DEBUG, "Failed to write to FIFO (no readers?)");
+	    } else {
+		syslog(LOG_DEBUG, "Data sent to FIFO: %s", log_entry);
+#endif
 	    }
-
 	    // Затем добавляем в буфер логов
 	    if (add_to_log_buffer(&log_buffer, log_entry) == -1) {
+#ifdef DEBUG
 		syslog(LOG_DEBUG, "Failed to add to log buffer");
+#endif
 	    }
 
 	    previous_data = current_data;
