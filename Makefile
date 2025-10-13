@@ -1,8 +1,8 @@
 # Makefile for PZEM-004T Monitor Service
 
 # Compiler and flags
-СС = arm-linux-gnueabihf-gcc
-#CC = gcc
+#СС = arm-linux-gnueabihf-gcc
+CC = gcc
 CFLAGS = -Wall -Wextra -O2
 #CFLAGS = -Wall -Wextra -O2 -std=c99
 LDFLAGS = -lmodbus -lm
