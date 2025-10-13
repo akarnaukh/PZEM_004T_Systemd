@@ -30,9 +30,9 @@ sudo apk add build-base libmodbus-dev
 ### Сборка из исходников
 
 -  Клонирование или создание структуры проекта:
-```sh
+```bash
 git clone https://github.com/akarnaukh/PZEM_004T_Systemd.git
-cd PZEM_004T_Systemd
+cd ./PZEM_004T_Systemd
 ```
 - Размещение файлов:
 ```text
@@ -43,7 +43,7 @@ systemd/pzem@.service - systemd сервис
 Makefile - система сборки
 ```
  - Сборка проекта:
- ```sh
+ ```bash
  # Стандартная сборка с шаблонами
 make
 
@@ -54,11 +54,11 @@ make debug
 make templates
 ```
 - Установка в систему:
-```sh
+```bash
 sudo make install
 ```
 ## Удаление сервиса
-```sh
+```bash
 # Полное удаление из системы
 sudo make uninstall
 
@@ -107,14 +107,14 @@ frequency_low_warning = 49
 frequency_low_alarm = 48
 ```
 - Создание дополнительных конфигураций:
-```sh
+```bash
 sudo cp /etc/pzem/default.conf /etc/pzem/phase1.conf
 sudo cp /etc/pzem/default.conf /etc/pzem/phase2.conf
 sudo nano /etc/pzem/phase1.conf  # редактирование настроек
 ```
 
 ## Управление сервисом
-```sh
+```bash
 # Запуск сервиса с разными конфигурациями
 sudo systemctl start pzem@default
 sudo systemctl start pzem@phase1
@@ -159,7 +159,7 @@ sudo systemctl stop pzem@phase1
 ## Использование FIFO для внешних сервисов
 
 - Сервис создает named pipe для реальной передачи данных:
-```sh
+```bash
 # Чтение данных в реальном времени ( /tmp/pzem_data_{config_name} )
 tail -f /tmp/pzem_data_phase1
 
@@ -170,7 +170,7 @@ while read line; do
 done < /tmp/pzem_data_phase1
 ```
 ## Удаление сервиса
-```sh
+```bash
 # Полное удаление из системы
 sudo make uninstall
 
@@ -182,12 +182,12 @@ sudo rm -rf /var/log/pzem # или как указано в конфигурац
 ## Примеры использования
 
 ### Для мониторинга одной фазы:
-```sh
+```bash
 sudo systemctl start pzem@default
 sudo journalctl -u pzem@default -f
 ```
 ### Для трехфазной системы:
-```sh
+```bash
 sudo systemctl start pzem@phase1
 sudo systemctl start pzem@phase2  
 sudo systemctl start pzem@phase3
