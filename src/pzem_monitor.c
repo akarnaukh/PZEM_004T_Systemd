@@ -616,7 +616,7 @@ void cleanup(void) {
     }
     
     // Очищаем FIFO
-    cleanup_fifo(fifo_path);
+    //cleanup_fifo(fifo_path);
     
     if (ctx != NULL) {
         modbus_close(ctx);
