@@ -42,6 +42,12 @@ void signal_handler(int sig) {
     syslog(LOG_INFO, "Received signal %d, shutting down", sig);
 }
 
+void signal_hup(int sig) {
+#ifdef DEBUG
+    syslog(LOG_DEBUG, "Received signal hup %d, setting keep_running to 0", sig);
+#endif
+}
+
 // Функция извлечения имени конфигурации из пути
 void extract_config_name(const char *config_path) {
     const char *last_slash = strrchr(config_path, '/');
@@ -75,8 +81,8 @@ int init_data_fifo(const char *fifo_path) {
     return 0;
 }
 
-// Запись данных в FIFO
-int write_to_fifo(const char *fifo_path, const char *data) {
+// Запись данных в FIFO const
+int write_to_fifo(const char *fifo_path, char *data) {
     int fd = open(fifo_path, O_WRONLY | O_NONBLOCK);
     if (fd == -1) {
         // Если нет читателей - это нормально, просто пропускаем запись
@@ -88,15 +94,20 @@ int write_to_fifo(const char *fifo_path, const char *data) {
 #endif
         return -1;
     }
-    
+    const char *estr = "\n";
+    strcat(data, estr);
     int bytes_written = write(fd, data, strlen(data));
-#ifdef DEBUG
     if (bytes_written == -1) {
+#ifdef DEBUG
 	// Ошибка записи (скорее всего нет читателей)
         syslog(LOG_DEBUG, "Failed to write to FIFO: %s", strerror(errno));
-    }
 #endif
-    
+    } else {
+#ifdef DEBUG
+        syslog(LOG_DEBUG, "Successful to write to FIFO: %s", fifo_path);
+#endif
+    }
+
     close(fd);
     return (bytes_written == -1) ? -1 : 0;
 }
@@ -237,6 +248,10 @@ int flush_log_buffer(log_buffer_t *buffer) {
             buffer->buffer[index] = NULL;
         }
     }
+
+#ifdef DEBUG
+    syslog(LOG_DEBUG, "Write log entry to log file %s, size: %d)", log_path, buffer->size);
+#endif
     
     fflush(log_file);
     fclose(log_file);
@@ -667,6 +682,13 @@ void safe_reconnect(const pzem_config_t *config) {
     usleep(1000000);
     if (init_modbus_connection(config) == 0) {
         syslog(LOG_INFO, "Reconnected successfully");
+/*
+	if (init_data_fifo(fifo_path) == -1) {
+	    syslog(LOG_WARNING, "Failed to create data FIFO, data broadcasting disabled");
+	} else {
+	    syslog(LOG_INFO, "Data broadcasting enabled via FIFO: %s", fifo_path);
+	}
+*/
     }
 }
 
@@ -688,7 +710,7 @@ int main(int argc, char *argv[]) {
     
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    signal(SIGHUP, signal_handler);
+    signal(SIGHUP, signal_hup);
     signal(SIGQUIT, signal_handler);
     
     syslog(LOG_INFO, "PZEM-004T Monitor starting with config: %s", config_file);

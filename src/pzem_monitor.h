@@ -113,7 +113,7 @@ void extract_config_name(const char *config_path);
 
 // Функции для FIFO
 int init_data_fifo(const char *fifo_path);
-int write_to_fifo(const char *fifo_path, const char *data);
+int write_to_fifo(const char *fifo_path, char *data);
 void cleanup_fifo(const char *fifo_path);
 
 // Функции работы с логами
@@ -140,5 +140,6 @@ int threshold_states_changed(const pzem_data_t *current, const pzem_data_t *prev
 
 // Сигналы
 void signal_handler(int sig);
+void signal_hup(int sig);
 
 #endif
