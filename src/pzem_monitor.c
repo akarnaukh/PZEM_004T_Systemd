@@ -94,8 +94,9 @@ int write_to_fifo(const char *fifo_path, char *data) {
 #endif
         return -1;
     }
-    const char *estr = "\n";
-    strcat(data, estr);
+
+//    const char *estr = "\n";
+//    strcat(data, estr);
     int bytes_written = write(fd, data, strlen(data));
     if (bytes_written == -1) {
 #ifdef DEBUG
@@ -243,7 +244,8 @@ int flush_log_buffer(log_buffer_t *buffer) {
     for (int i = 0; i < buffer->size; i++) {
         int index = (buffer->write_index - buffer->size + i + buffer->capacity) % buffer->capacity;
         if (buffer->buffer[index] != NULL) {
-            fprintf(log_file, "%s\n", buffer->buffer[index]);
+//            fprintf(log_file, "%s\n", buffer->buffer[index]);
+            fprintf(log_file, "%s", buffer->buffer[index]);
             free(buffer->buffer[index]);
             buffer->buffer[index] = NULL;
         }
@@ -354,7 +356,7 @@ void prepare_log_entry(char *log_entry, size_t size, const pzem_data_t *data) {
     
     if (data->status == 0) {
         // Формат: дата, время, напряжение, состояние_напряжения, ток, состояние_тока, частота, состояние_частоты, мощность, статус
-        snprintf(log_entry, size, "%s,%s,%.1f,%c,%.3f,%c,%.1f,%c,%.1f,%d",
+        snprintf(log_entry, size, "%s,%s,%.1f,%c,%.3f,%c,%.1f,%c,%.1f,%d\n",
                  date_str, time_str,
                  data->voltage, data->voltage_state,
                  data->current, data->current_state,
@@ -362,7 +364,7 @@ void prepare_log_entry(char *log_entry, size_t size, const pzem_data_t *data) {
                  data->power, data->status);
     } else {
         // При ошибке пишем прочерки
-        snprintf(log_entry, size, "%s,%s,-,-,-,-,-,-,-,%d",
+        snprintf(log_entry, size, "%s,%s,-,-,-,-,-,-,-,%d\n",
                  date_str, time_str, data->status);
     }
 }
