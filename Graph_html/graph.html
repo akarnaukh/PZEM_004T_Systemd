@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>График данных электроэнергии с зумом</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 6px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #fileInput {
+            display: none;
+        }
+        .file-label {
+            padding: 8px 16px;
+            background-color: #2196F3;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .file-label:hover {
+            background-color: #0b7dda;
+        }
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 10px;
+            margin-bottom: 15px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .legend-color {
+            width: 15px;
+            height: 15px;
+            border-radius: 3px;
+        }
+        .chart-container {
+            width: 100%;
+            height: 500px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .axis-label {
+            font-size: 12px;
+            fill: #555;
+        }
+        .tooltip {
+            position: absolute;
+            padding: 10px;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 4px;
+            pointer-events: none;
+            font-size: 12px;
+            opacity: 0;
+            z-index: 10;
+        }
+        .zoom-controls {
+            display: flex;
+            gap: 5px;
+            margin-left: auto;
+        }
+        .zoom-btn {
+            padding: 5px 10px;
+            background-color: #6c757d;
+            font-size: 12px;
+        }
+        .zoom-btn:hover {
+            background-color: #5a6268;
+        }
+        .brush-rect {
+            fill: rgba(100, 100, 255, 0.2);
+            stroke: #6464ff;
+            stroke-width: 1px;
+        }
+        .status-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>График данных электроэнергии с зумом</h1>
+        
+        <div class="controls">
+            <input type="file" id="fileInput" accept=".csv">
+            <label for="fileInput" class="file-label">Выбрать CSV файл</label>
+            <button id="loadButton">Загрузить данные</button>
+            <div>
+                <label>
+                    <input type="checkbox" id="voltageCheck" checked> Напряжение
+                </label>
+                <label>
+                    <input type="checkbox" id="currentCheck" checked> Ток
+                </label>
+                <label>
+                    <input type="checkbox" id="frequencyCheck" checked> Частота
+                </label>
+            </div>
+            <div class="zoom-controls">
+                <button id="zoomIn" class="zoom-btn">Увеличить</button>
+                <button id="zoomOut" class="zoom-btn">Уменьшить</button>
+                <button id="resetZoom" class="zoom-btn">Сбросить зум</button>
+            </div>
+        </div>
+        
+        <div class="status-info" id="zoomStatus">Масштаб: 100% | Используйте колесо мыши для зума или выделите область</div>
+        
+        <div class="legend" id="legend"></div>
+        
+        <div class="chart-container" id="chart"></div>
+    </div>
+
+    <script>
+        // Элементы управления
+        const fileInput = document.getElementById('fileInput');
+        const loadButton = document.getElementById('loadButton');
+        const voltageCheck = document.getElementById('voltageCheck');
+        const currentCheck = document.getElementById('currentCheck');
+        const frequencyCheck = document.getElementById('frequencyCheck');
+        const chartContainer = document.getElementById('chart');
+        const legendContainer = document.getElementById('legend');
+        const zoomInBtn = document.getElementById('zoomIn');
+        const zoomOutBtn = document.getElementById('zoomOut');
+        const resetZoomBtn = document.getElementById('resetZoom');
+        const zoomStatus = document.getElementById('zoomStatus');
+        
+        // Переменные для данных и графика
+        let data = [];
+        let svg, xScale, yScale, xAxis, yAxis, zoomBehavior;
+        let margin = { top: 20, right: 80, bottom: 50, left: 60 };
+        let width = chartContainer.clientWidth - margin.left - margin.right;
+        let height = chartContainer.clientHeight - margin.top - margin.bottom;
+        
+        // Переменные для зума
+        let currentZoomTransform = d3.zoomIdentity;
+        let zoomLevel = 1;
+        
+        // Цвета для линий
+        const colors = {
+            voltage: '#e41a1c',
+            current: '#377eb8',
+            frequency: '#4daf4a'
+        };
+        
+        // Обработчик загрузки файла
+        loadButton.addEventListener('click', () => {
+            if (fileInput.files.length === 0) {
+                alert('Пожалуйста, выберите CSV файл');
+                return;
+            }
+            
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                const csvText = e.target.result;
+                parseCSV(csvText);
+            };
+            
+            reader.readAsText(file);
+        });
+        
+        // Парсинг CSV данных
+        function parseCSV(csvText) {
+            const rows = csvText.split('\n');
+            const headers = rows[0].split(',');
+            
+            data = [];
+            
+            for (let i = 1; i < rows.length; i++) {
+                if (rows[i].trim() === '') continue;
+                
+                const values = rows[i].split(',');
+                const timestamp = new Date(values[0] + 'T' + values[1]);
+                
+                data.push({
+                    timestamp: timestamp,
+                    time: values[1],
+                    voltage: parseFloat(values[2]),
+                    voltageStatus: values[3],
+                    current: parseFloat(values[4]),
+                    currentStatus: values[5],
+                    frequency: parseFloat(values[6]),
+                    frequencyStatus: values[7],
+                    power: parseFloat(values[8]),
+                    status: parseInt(values[9])
+                });
+            }
+            
+            createChart();
+            updateLegend();
+        }
+        
+        // Создание графика
+        function createChart() {
+            // Очистка предыдущего графика
+            d3.select('#chart').html('');
+            
+            // Создание SVG элемента
+            svg = d3.select('#chart')
+                .append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+                .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+            
+            // Определение исходных доменов
+            const xDomain = d3.extent(data, d => d.timestamp);
+            
+            // Определение максимального значения для оси Y
+            const yValues = [];
+            if (voltageCheck.checked) yValues.push(...data.map(d => d.voltage));
+            if (currentCheck.checked) yValues.push(...data.map(d => d.current));
+            if (frequencyCheck.checked) yValues.push(...data.map(d => d.frequency));
+            
+            const yMin = d3.min(yValues);
+            const yMax = d3.max(yValues);
+            const yDomain = [yMin, yMax];
+            
+            // Определение шкал
+            xScale = d3.scaleTime()
+                .domain(xDomain)
+                .range([0, width]);
+            
+            yScale = d3.scaleLinear()
+                .domain(yDomain)
+                .range([height, 0]);
+            
+            // Сохранение исходных доменов для сброса зума
+            xScale.originalDomain = xDomain;
+            yScale.originalDomain = yDomain;
+            
+            // Создание осей
+            xAxis = svg.append('g')
+                .attr('transform', `translate(0,${height})`)
+                .call(d3.axisBottom(xScale)
+                    .tickFormat(d3.timeFormat('%H:%M:%S')));
+            
+            yAxis = svg.append('g')
+                .call(d3.axisLeft(yScale));
+            
+            // Подписи осей
+            svg.append('text')
+                .attr('transform', `translate(${width / 2},${height + margin.bottom - 10})`)
+                .style('text-anchor', 'middle')
+                .text('Время');
+            
+            svg.append('text')
+                .attr('transform', 'rotate(-90)')
+                .attr('y', 0 - margin.left)
+                .attr('x', 0 - (height / 2))
+                .attr('dy', '1em')
+                .style('text-anchor', 'middle')
+                .text('Значения');
+            
+            // Создание линий
+            drawLines();
+            
+            // Добавление подсказки
+            const tooltip = d3.select('body').append('div')
+                .attr('class', 'tooltip');
+            
+            // Добавление точек и подсказок
+            svg.selectAll('.dot-group')
+                .data(data)
+                .enter()
+                .append('circle')
+                .attr('class', 'dot')
+                .attr('cx', d => xScale(d.timestamp))
+                .attr('cy', d => yScale(d.voltage)) // Используем напряжение как точку отсчета
+                .attr('r', 3)
+                .style('fill', 'transparent')
+                .on('mouseover', function(event, d) {
+                    tooltip
+                        .style('opacity', 1)
+                        .html(`
+                            <div>Время: ${d.time}</div>
+                            <div>Напряжение: ${d.voltage} В</div>
+                            <div>Ток: ${d.current} А</div>
+                            <div>Частота: ${d.frequency} Гц</div>
+                        `)
+                        .style('left', (event.pageX + 10) + 'px')
+                        .style('top', (event.pageY - 28) + 'px');
+                })
+                .on('mouseout', function() {
+                    tooltip.style('opacity', 0);
+                });
+            
+            // Настройка поведения зума
+            setupZoom();
+        }
+        
+        // Настройка зума
+        function setupZoom() {
+            // Создание поведения зума
+            zoomBehavior = d3.zoom()
+                .scaleExtent([0.5, 20]) // Минимальный и максимальный масштаб
+                .translateExtent([[0, 0], [width, height]])
+                .extent([[0, 0], [width, height]])
+                .on('zoom', zoomed);
+            
+            // Применение зума к SVG
+            d3.select('#chart svg')
+                .call(zoomBehavior);
+            
+            // Обработчики для кнопок зума
+            zoomInBtn.addEventListener('click', () => {
+                zoomLevel = Math.min(20, zoomLevel * 1.5);
+                applyZoom();
+            });
+            
+            zoomOutBtn.addEventListener('click', () => {
+                zoomLevel = Math.max(0.5, zoomLevel / 1.5);
+                applyZoom();
+            });
+            
+            resetZoomBtn.addEventListener('click', () => {
+                resetZoom();
+            });
+        }
+        
+        // Функция применения зума
+        function applyZoom() {
+            const centerX = width / 2;
+            const centerY = height / 2;
+            
+            // Вычисление нового преобразования
+            const newTransform = d3.zoomIdentity
+                .translate(centerX, centerY)
+                .scale(zoomLevel)
+                .translate(-centerX, -centerY);
+            
+            // Применение преобразования
+            d3.select('#chart svg')
+                .transition()
+                .duration(300)
+                .call(zoomBehavior.transform, newTransform);
+        }
+        
+        // Функция сброса зума
+        function resetZoom() {
+            zoomLevel = 1;
+            d3.select('#chart svg')
+                .transition()
+                .duration(300)
+                .call(zoomBehavior.transform, d3.zoomIdentity);
+        }
+        
+        // Обработчик события зума
+        function zoomed(event) {
+            currentZoomTransform = event.transform;
+            zoomLevel = currentZoomTransform.k;
+            
+            // Обновление шкал с учетом зума
+            const newXScale = currentZoomTransform.rescaleX(xScale);
+            const newYScale = currentZoomTransform.rescaleY(yScale);
+            
+            // Обновление осей
+            xAxis.call(d3.axisBottom(newXScale).tickFormat(d3.timeFormat('%H:%M:%S')));
+            yAxis.call(d3.axisLeft(newYScale));
+            
+            // Обновление линий
+            updateLines(newXScale, newYScale);
+            
+            // Обновление точек
+            svg.selectAll('.dot')
+                .attr('cx', d => newXScale(d.timestamp))
+                .attr('cy', d => newYScale(d.voltage));
+            
+            // Обновление статуса зума
+            updateZoomStatus();
+        }
+        
+        // Отрисовка линий графика
+        function drawLines() {
+            // Удаление старых линий
+            svg.selectAll('.line').remove();
+            
+            // Линия напряжения
+            if (voltageCheck.checked) {
+                const voltageLine = d3.line()
+                    .x(d => xScale(d.timestamp))
+                    .y(d => yScale(d.voltage));
+                
+                svg.append('path')
+                    .datum(data)
+                    .attr('class', 'line voltage-line')
+                    .attr('d', voltageLine)
+                    .style('stroke', colors.voltage)
+                    .style('stroke-width', 2)
+                    .style('fill', 'none');
+            }
+            
+            // Линия тока
+            if (currentCheck.checked) {
+                const currentLine = d3.line()
+                    .x(d => xScale(d.timestamp))
+                    .y(d => yScale(d.current));
+                
+                svg.append('path')
+                    .datum(data)
+                    .attr('class', 'line current-line')
+                    .attr('d', currentLine)
+                    .style('stroke', colors.current)
+                    .style('stroke-width', 2)
+                    .style('fill', 'none');
+            }
+            
+            // Линия частоты
+            if (frequencyCheck.checked) {
+                const frequencyLine = d3.line()
+                    .x(d => xScale(d.timestamp))
+                    .y(d => yScale(d.frequency));
+                
+                svg.append('path')
+                    .datum(data)
+                    .attr('class', 'line frequency-line')
+                    .attr('d', frequencyLine)
+                    .style('stroke', colors.frequency)
+                    .style('stroke-width', 2)
+                    .style('fill', 'none');
+            }
+        }
+        
+        // Обновление линий при зуме
+        function updateLines(newXScale, newYScale) {
+            // Обновление линии напряжения
+            if (voltageCheck.checked) {
+                const voltageLine = d3.line()
+                    .x(d => newXScale(d.timestamp))
+                    .y(d => newYScale(d.voltage));
+                
+                svg.select('.voltage-line')
+                    .attr('d', voltageLine);
+            }
+            
+            // Обновление линии тока
+            if (currentCheck.checked) {
+                const currentLine = d3.line()
+                    .x(d => newXScale(d.timestamp))
+                    .y(d => newYScale(d.current));
+                
+                svg.select('.current-line')
+                    .attr('d', currentLine);
+            }
+            
+            // Обновление линии частоты
+            if (frequencyCheck.checked) {
+                const frequencyLine = d3.line()
+                    .x(d => newXScale(d.timestamp))
+                    .y(d => newYScale(d.frequency));
+                
+                svg.select('.frequency-line')
+                    .attr('d', frequencyLine);
+            }
+        }
+        
+        // Обновление статуса зума
+        function updateZoomStatus() {
+            const zoomPercent = Math.round(zoomLevel * 100);
+            zoomStatus.textContent = `Масштаб: ${zoomPercent}% | Используйте колесо мыши для зума или выделите область`;
+        }
+        
+        // Обновление легенды
+        function updateLegend() {
+            legendContainer.innerHTML = '';
+            
+            if (voltageCheck.checked) {
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-color" style="background-color: ${colors.voltage}"></div>
+                    <span>Напряжение (В)</span>
+                `;
+                legendContainer.appendChild(item);
+            }
+            
+            if (currentCheck.checked) {
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-color" style="background-color: ${colors.current}"></div>
+                    <span>Ток (А)</span>
+                `;
+                legendContainer.appendChild(item);
+            }
+            
+            if (frequencyCheck.checked) {
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-color" style="background-color: ${colors.frequency}"></div>
+                    <span>Частота (Гц)</span>
+                `;
+                legendContainer.appendChild(item);
+            }
+        }
+        
+        // Обработчики изменения состояния чекбоксов
+        voltageCheck.addEventListener('change', updateChart);
+        currentCheck.addEventListener('change', updateChart);
+        frequencyCheck.addEventListener('change', updateChart);
+        
+        // Обновление графика при изменении состояния чекбоксов
+        function updateChart() {
+            if (data.length > 0) {
+                drawLines();
+                updateLegend();
+            }
+        }
+        
+        // Обработчик изменения размера окна
+        window.addEventListener('resize', function() {
+            if (data.length > 0) {
+                width = chartContainer.clientWidth - margin.left - margin.right;
+                height = chartContainer.clientHeight - margin.top - margin.bottom;
+                createChart();
+            }
+        });
+    </script>
+</body>
+</html>
+
