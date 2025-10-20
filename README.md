@@ -1,9 +1,7 @@
 # PZEM-004T Monitor & Log Service
 
-### ⚠️ Проект еще в работе ⚠️
-
 ## Описание
-PZEM-004T Monitor - это системный сервис для мониторинга электроэнергии с помощью датчиков PZEM-004T через интерфейс Modbus-RTU. Сервис предназначен для работы на embedded Linux системах (Raspberry Pi, Orange Pi, Luckfox Pico и др.).
+PZEM-004T Monitor - это системный сервис для мониторинга электроэнергии с помощью датчиков PZEM-004T через интерфейс UART / Modbus-RTU. Сервис предназначен для работы на embedded Linux системах (Raspberry Pi, Orange Pi, Luckfox Pico и др.).
 
 
 ## Основные возможности:
