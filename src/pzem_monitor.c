@@ -133,6 +133,13 @@ int create_directory_if_not_exists(const char *path) {
     return 0;
 }
 
+// Функция получения текущего времени в милисекундах
+long long get_time_ms() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
+
 // Функция получения текущей даты в формате YYYY-MM-DD
 void get_current_date(char *date_str, size_t size) {
     time_t t = time(NULL);
@@ -707,6 +714,7 @@ int main(int argc, char *argv[]) {
     char syslog_ident[128];
     snprintf(syslog_ident, sizeof(syslog_ident), "pzem-%s", config_name);
     service_name = syslog_ident;
+    long long start_time, end_time;
     
     openlog(service_name, LOG_PID | LOG_CONS, LOG_DAEMON);
     
@@ -798,6 +806,7 @@ int main(int argc, char *argv[]) {
     int error_count = 0;
     
     while (keep_running) {
+	start_time = get_time_ms();
         if (read_pzem_data(&current_data) == -1) {
             current_data.status = 1;
         } else {
@@ -849,8 +858,17 @@ int main(int argc, char *argv[]) {
         } else {
             error_count = 0;
         }
-        
-        usleep(global_config.poll_interval_ms * 1000);
+
+	end_time = get_time_ms();
+        u_int16_t duration_ms = end_time - start_time;
+        int16_t tSleep = global_config.poll_interval_ms - duration_ms;
+
+	if (tSleep > 0) {
+            usleep(tSleep * 1000);
+        } else {
+            syslog(LOG_ALERT, "Attention! The time spent on the request and processing (%d) is longer than the specified survey period %d", duration_ms, global_config.poll_interval_ms);
+        }
+//        usleep(global_config.poll_interval_ms * 1000);
     }
     
     syslog(LOG_INFO, "Monitoring stopped for config: %s", config_name);

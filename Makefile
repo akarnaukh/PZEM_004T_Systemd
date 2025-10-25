@@ -25,7 +25,7 @@ LOG_DIR = /var/log/pzem
 # Source files
 SOURCES = $(SRCDIR)/pzem_monitor.c
 OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(BUILDDIR)/%.o)
-TARGET = $(BINDIR)/pzem_monitor
+TARGET = $(BINDIR)/pzem_monitor4
 
 # Default target - build and create templates
 all: allclean templates $(TARGET)
